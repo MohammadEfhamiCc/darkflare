@@ -52,6 +52,7 @@ type Client struct {
 	proxyURL        string
 	username     string
 	password     string
+	insecureTLS  bool // Added for -insecure flag
 }
 
 func generateSessionID() string {
@@ -63,7 +64,7 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-func NewClient(cloudflareHost string, destPort int, scheme string, destAddr string, debug bool, proxyURL string, username string, password string) *Client {
+func NewClient(cloudflareHost string, destPort int, scheme string, destAddr string, debug bool, proxyURL string, username string, password string, insecureTLS bool) *Client {
 	rand.Seed(time.Now().UnixNano())
 
 	if scheme == "" {
@@ -124,7 +125,7 @@ func NewClient(cloudflareHost string, destPort int, scheme string, destAddr stri
 			},
 			PreferServerCipherSuites: true,
 			SessionTicketsDisabled:   false,
-			InsecureSkipVerify:       true,
+			InsecureSkipVerify:       false,
 			NextProtos:               []string{"http/1.1"},
 		},
 		MaxIdleConns:          1,
@@ -199,6 +200,14 @@ func NewClient(cloudflareHost string, destPort int, scheme string, destAddr stri
 	client.httpClient = &http.Client{
 		Transport: transport,
 		Timeout:   30 * time.Second,
+	}
+
+	// Apply insecureTLS flag
+	if insecureTLS {
+		if client.debug {
+			client.debugLog("TLS certificate verification is disabled due to -insecure flag.")
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true
 	}
 
 	return client
@@ -517,6 +526,7 @@ func main() {
 	var destAddr string
 	var debug bool
 	var proxyURL string
+	var insecureTLS bool // Added for -insecure flag
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "DarkFlare Client - TCP-over-CDN tunnel client component\n")
@@ -539,6 +549,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -p        Proxy URL for outbound connections\n")
 		fmt.Fprintf(os.Stderr, "            Format: scheme://[user:pass@]host:port\n")
 		fmt.Fprintf(os.Stderr, "            Supported schemes: http, https, socks5, socks5h\n\n")
+		fmt.Fprintf(os.Stderr, "  -insecure Disable TLS certificate verification (use with caution)\n\n")
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  Basic SSH tunnel:\n")
 		fmt.Fprintf(os.Stderr, "    %s -l 2222 -t cdn.example.com -d ssh.target.com:22\n\n", os.Args[0])
@@ -561,6 +572,7 @@ func main() {
 	flag.StringVar(&destAddr, "d", "", "")
 	flag.BoolVar(&debug, "debug", false, "")
 	flag.StringVar(&proxyURL, "p", "", "Proxy URL (http://host:port or socks5://host:port)")
+	flag.BoolVar(&insecureTLS, "insecure", false, "Disable TLS certificate verification (use with caution)")
 	flag.Parse()
 
 	if len(os.Args) == 1 {
@@ -618,7 +630,7 @@ func main() {
 
 	if localAddr == "stdin:stdout" {
 		// Create client in stdin/stdout mode
-		client := NewClient(host, destPort, scheme, destAddr, debug, proxyURL,username, password)
+		client := NewClient(host, destPort, scheme, destAddr, debug, proxyURL,username, password, insecureTLS)
 		// Use os.Stdin and os.Stdout as the connection
 		stdinStdout := &StdinStdoutConn{
 			Reader: os.Stdin,
@@ -647,7 +659,7 @@ func main() {
 				continue
 			}
 
-			client := NewClient(host, destPort, scheme, destAddr, debug, proxyURL,username, password)
+			client := NewClient(host, destPort, scheme, destAddr, debug, proxyURL,username, password, insecureTLS)
 			go client.handleConnection(conn)
 		}
 	}
