@@ -38,9 +38,11 @@ type Server struct {
 	silent       bool
 	redirect     string
 	overrideDest string
+	username     string    // 新增
+	password     string    // 新增
 }
 
-func NewServer(destHost, destPort string, appCommand string, debug bool, allowDirect bool, silent bool, redirect string, overrideDest string) *Server {
+func NewServer(destHost, destPort string, appCommand string, debug bool, allowDirect bool, silent bool, redirect string, overrideDest string,username string, password string) *Server {
 	s := &Server{
 		destHost:     destHost,
 		destPort:     destPort,
@@ -51,6 +53,8 @@ func NewServer(destHost, destPort string, appCommand string, debug bool, allowDi
 		silent:       silent,
 		redirect:     redirect,
 		overrideDest: overrideDest,
+		username:     username,     // 新增
+		password:     password,     // 新增
 	}
 
 	if s.isAppMode && s.debug && !s.silent {
@@ -152,6 +156,24 @@ func (s *Server) handleApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// 添加认证检查
+	if s.username != "" || s.password != "" {
+		username, password, ok := r.BasicAuth()
+		if s.debug {
+			log.Printf("Auth attempt - User: %s, Auth OK: %v", username, ok)
+			log.Printf("Expected - User: %s, Pass: %s", s.username, s.password)
+		}
+		if !ok || username != s.username || password != s.password {
+			redirectURL := s.redirect
+			if redirectURL == "" {
+				redirectURL = "https://github.com/doxx/darkflare"
+			}
+			w.Header().Set("Location", redirectURL)
+			w.WriteHeader(http.StatusFound)
+			return
+		}
+	}
+
 	if s.isAppMode {
 		s.handleApplication(w, r)
 		return
@@ -439,6 +461,7 @@ func main() {
 	var silent bool
 	var redirect string
 	var overrideDest string
+	var auth string
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "DarkFlare Server - TCP-over-CDN tunnel server component\n")
@@ -478,8 +501,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  - Destination validation is performed for security\n")
 		fmt.Fprintf(os.Stderr, "  - Use with Cloudflare as reverse proxy for best security\n\n")
 		fmt.Fprintf(os.Stderr, "For more information: https://github.com/doxx/darkflare\n")
+		fmt.Fprintf(os.Stderr, "  -auth     Basic authentication credentials\n")
 	}
-
+	flag.StringVar(&auth, "auth", "", "Basic auth (user:pass)")
 	flag.StringVar(&origin, "o", "http://0.0.0.0:8080", "")
 	flag.StringVar(&certFile, "c", "", "")
 	flag.StringVar(&keyFile, "k", "", "")
@@ -490,6 +514,8 @@ func main() {
 	flag.StringVar(&redirect, "redirect", "", "Custom URL to redirect unauthorized requests (default: GitHub project page)")
 	flag.StringVar(&overrideDest, "override-dest", "", "Override destination address (format: host:port)")
 	flag.Parse()
+
+
 
 	// Parse origin URL
 	originURL, err := url.Parse(origin)
@@ -527,7 +553,16 @@ func main() {
 		}
 	}
 
-	server := NewServer(originHost, originPort, appCommand, debug, allowDirect, silent, redirect, overrideDest)
+	server := NewServer(originHost, originPort, appCommand, debug, allowDirect, silent, redirect, overrideDest,"","")
+
+	// 解析认证信息
+	if auth != "" {
+		parts := strings.Split(auth, ":")
+		if len(parts) == 2 {
+			server.username = parts[0]
+			server.password = parts[1]
+		}
+	}
 
 	log.Printf("DarkFlare server running on %s://%s:%s", originURL.Scheme, originHost, originPort)
 	if allowDirect {
